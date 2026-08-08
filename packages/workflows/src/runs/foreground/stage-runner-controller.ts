@@ -24,6 +24,7 @@ import {
 	workflowModelId,
 } from "../shared/model-fallback.js";
 import { nextRetryDecision, sleepOrAbort } from "../shared/retry.js";
+import { resolveSessionAdapter } from "./session-adapter-registry.js";
 import { StageDeliveryActivity, type StageDeliveryActivityListener } from "./stage-delivery-activity.js";
 import { stageSessionQueueUpdateEvent } from "./stage-queued-user-messages.js";
 import { candidateLabel, effectiveCandidateReasoning, modelAttemptReasoning } from "./stage-runner-candidate.js";
@@ -1025,8 +1026,9 @@ export class StageSessionController {
 		});
 		let created: StageSessionRuntime | StageSessionCreateResult;
 		try {
-			created = this.opts.adapters.agentSession
-				? await this.opts.adapters.agentSession.create(
+			const sessionAdapter = resolveSessionAdapter(this.opts.adapters, this.meta.sessionAdapter);
+			created = sessionAdapter
+				? await sessionAdapter.create(
 						stripWorkflowOnlyOptions(
 							stageOptions,
 							this.opts.defaultSessionDir,

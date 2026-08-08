@@ -120,6 +120,12 @@ export interface StageMcpOptions {
 	readonly deny?: readonly string[];
 }
 
+/** Serializable selection of an extension-provided stage session runtime. */
+export interface SessionAdapterSelector extends WorkflowSerializableObject {
+	readonly name: string;
+	readonly config?: WorkflowSerializableObject;
+}
+
 export interface WorkflowAgentToolResult<TDetails = unknown> {
 	readonly content: unknown;
 	readonly details?: TDetails;
@@ -188,6 +194,8 @@ export interface StageOptions<TSchemaDef extends TSchema | undefined = TSchema |
 	 * Only applied when the stage session actually has intercom access.
 	 */
 	readonly group?: string | true;
+	/** Use a named external AgentSessionAdapter instead of Atomic's local session runtime. */
+	readonly sessionAdapter?: SessionAdapterSelector;
 }
 
 export interface CompleteStageOpts extends WorkflowModelFallbackFields {
@@ -313,6 +321,7 @@ export interface StageExecutionMeta {
 	readonly stageOptions?: StageOptions;
 	readonly signal?: AbortSignal;
 	readonly executionMode?: WorkflowExecutionMode;
+	readonly sessionAdapter?: SessionAdapterSelector;
 }
 
 export interface AgentSessionAdapter {
@@ -332,6 +341,10 @@ export interface CompleteAdapter {
 
 export interface StageAdapters {
 	readonly agentSession?: AgentSessionAdapter;
+	readonly sessionAdapters?: {
+		get(name: string): AgentSessionAdapter | undefined;
+		names(): readonly string[];
+	};
 	readonly prompt?: PromptAdapter;
 	readonly complete?: CompleteAdapter;
 }

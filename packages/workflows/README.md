@@ -350,6 +350,16 @@ await ctx.parallel([
 });
 ```
 
+Stages use Atomic's local session runtime by default. An extension may register a named `AgentSessionAdapter`; select it with serializable stage configuration:
+
+```ts
+const remote = ctx.stage("remote-review", {
+  sessionAdapter: { name: "remote-pi", config: { profile: "fastass" } },
+});
+```
+
+The selector is retained with workflow snapshots and durable checkpoints, so completed-stage attachment and follow-up reopen through the same adapter. Atomic rejects an unknown name before provider work starts. Parallelism remains a workflow concern: put the selector on each `ctx.parallel` item and control fan-out with the normal parallel concurrency option.
+
 Worktree semantics:
 
 - `gitWorktreeDir` must be used from inside a Git repository. Relative paths resolve from the logical invoking repository root; absolute paths are used as-is.

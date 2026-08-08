@@ -123,6 +123,10 @@ export interface CompleteAdapter {
 
 export interface StageAdapters {
 	agentSession?: AgentSessionAdapter;
+	sessionAdapters?: {
+		get(name: string): AgentSessionAdapter | undefined;
+		names(): readonly string[];
+	};
 	prompt?: PromptAdapter;
 	complete?: CompleteAdapter;
 }

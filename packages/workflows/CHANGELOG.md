@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added named external `AgentSessionAdapter` selection for workflow stages through the serializable `sessionAdapter: { name, config }` option. Extensions register adapters over a versioned shared-event-bus protocol; ordinary stages continue to use Atomic's local adapter. Adapter identity survives live snapshots, session-entry restore, DBOS replay, completed-run inspection, and post-mortem stage chat, while unknown and conflicting registrations fail explicitly.
+
 ### Changed
 
 - Updated the Ralph research stage model configuration. The primary model moves from `openai-codex/gpt-5.6-luna:max` to `anthropic/claude-opus-5:high`, and the fallback chain is rebuilt around high/xhigh thinking levels: GPT-5.6 Sol at `xhigh` replaces the Luna variants, Claude Fable 5 and Claude Opus 4.8 step up from `low`/`medium` to `high`, GPT-5.5 and GLM-5.2 step up to `xhigh`, and Kimi K3 (`kimi-coding`, `moonshotai`, `moonshotai-cn`, and OpenRouter) plus `openrouter/sakana/fugu-ultra:high` join the chain.
