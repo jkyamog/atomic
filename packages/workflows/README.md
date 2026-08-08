@@ -360,6 +360,8 @@ const remote = ctx.stage("remote-review", {
 
 The selector is retained with workflow snapshots and durable checkpoints, so completed-stage attachment and follow-up reopen through the same adapter. Atomic rejects an unknown name before provider work starts. Parallelism remains a workflow concern: put the selector on each `ctx.parallel` item and control fan-out with the normal parallel concurrency option.
 
+An adapter that owns an external transport may set `retryPolicy: "never"`. Atomic then surfaces creation and prompt failures without same-model retry or model-fallback session replacement; an explicit workflow resume remains the recovery boundary.
+
 Worktree semantics:
 
 - `gitWorktreeDir` must be used from inside a Git repository. Relative paths resolve from the logical invoking repository root; absolute paths are used as-is.

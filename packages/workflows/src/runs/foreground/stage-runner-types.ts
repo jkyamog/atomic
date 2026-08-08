@@ -99,6 +99,8 @@ export interface StageSessionCreateResult {
 }
 
 export interface AgentSessionAdapter {
+	/** Set to `never` when reconnect/retry must remain an explicit workflow control action. */
+	readonly retryPolicy?: "default" | "never";
 	create(
 		options: StageSessionCreateOptions,
 		meta?: StageExecutionMeta,

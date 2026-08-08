@@ -2095,6 +2095,8 @@ Atomic retains `sessionAdapter` in live snapshots, session-entry restore, durabl
 
 The adapter owns one stage session only. Use `ctx.parallel` and its `concurrency` option for fan-out; do not make one adapter instance multiplex workflow items internally.
 
+External transports that must not reconnect implicitly can declare `retryPolicy: "never"` on their `AgentSessionAdapter`. Atomic surfaces a thrown creation or prompt failure immediately instead of applying same-model retry or replacing the session through `fallbackModels`; recovery then happens only through an explicit workflow resume.
+
 Creates and registers a named stage synchronously; work starts when you call a method such as `prompt()` or `complete()`. Use it when `ctx.task` is too coarse and direct session control is required.
 
 ### `ctx.ui`

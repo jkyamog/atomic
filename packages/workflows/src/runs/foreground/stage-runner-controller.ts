@@ -713,7 +713,9 @@ export class StageSessionController {
 				// budget on a request the same model has already rejected.
 				const retryableFailure = isRetryableModelFailure(error);
 				const sameCandidateRetryable =
-					isRetryableSameModelFailure(error) && !isUnresolvedContextOverflowFailure(error);
+					this.adapterAllowsRetry() &&
+					isRetryableSameModelFailure(error) &&
+					!isUnresolvedContextOverflowFailure(error);
 				const decision = nextRetryDecision(this.retrySettings(), retryAttempt, sameCandidateRetryable);
 				const continuationSession = retryableAgentSession(activeSession);
 				const admittedMessages = activeSession.messages.length > messagesBeforeAttempt.length;
@@ -1196,7 +1198,7 @@ export class StageSessionController {
 			}
 			const message = errorMessage(err);
 			this.modelAttempts.push({ model: resumedLabel, success: false, error: message });
-			if (this.opts.signal?.aborted || !isRetryableModelFailure(err)) {
+			if (this.opts.signal?.aborted || !this.adapterAllowsRetry() || !isRetryableModelFailure(err)) {
 				this.modelWarnings.push(...this.pendingFallbackWarnings);
 				this.pendingFallbackWarnings.length = 0;
 				this.notifyModelFallbackMetaChange();
@@ -1241,7 +1243,12 @@ export class StageSessionController {
 			...modelAttemptReasoning(candidate, this.effectiveStageOptions?.thinkingLevel),
 			error: message,
 		});
-		if (this.opts.signal?.aborted || !isRetryableModelFailure(err) || index === candidates.length - 1) {
+		if (
+			this.opts.signal?.aborted ||
+			!this.adapterAllowsRetry() ||
+			!isRetryableModelFailure(err) ||
+			index === candidates.length - 1
+		) {
 			this.modelWarnings.push(...this.pendingFallbackWarnings);
 			this.pendingFallbackWarnings.length = 0;
 			this.notifyModelFallbackMetaChange();
@@ -1257,6 +1264,10 @@ export class StageSessionController {
 
 	private capturedStructuredOutputForAttempt(): boolean {
 		return this.structuredOutputCapture?.called === true && this.opts.signal?.aborted !== true;
+	}
+
+	private adapterAllowsRetry(): boolean {
+		return resolveSessionAdapter(this.opts.adapters, this.meta.sessionAdapter)?.retryPolicy !== "never";
 	}
 
 	private recordSuccessfulAttempt(candidate: WorkflowResolvedModelCandidate): void {
