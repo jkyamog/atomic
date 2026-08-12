@@ -24,6 +24,7 @@ import {
 	workflowModelId,
 } from "../shared/model-fallback.js";
 import { nextRetryDecision, sleepOrAbort } from "../shared/retry.js";
+import { resolveSessionAdapter } from "./session-adapter-registry.js";
 import { StageDeliveryActivity, type StageDeliveryActivityListener } from "./stage-delivery-activity.js";
 import { stageSessionQueueUpdateEvent } from "./stage-queued-user-messages.js";
 import { candidateLabel, effectiveCandidateReasoning, modelAttemptReasoning } from "./stage-runner-candidate.js";
@@ -712,7 +713,9 @@ export class StageSessionController {
 				// budget on a request the same model has already rejected.
 				const retryableFailure = isRetryableModelFailure(error);
 				const sameCandidateRetryable =
-					isRetryableSameModelFailure(error) && !isUnresolvedContextOverflowFailure(error);
+					this.adapterAllowsRetry() &&
+					isRetryableSameModelFailure(error) &&
+					!isUnresolvedContextOverflowFailure(error);
 				const decision = nextRetryDecision(this.retrySettings(), retryAttempt, sameCandidateRetryable);
 				const continuationSession = retryableAgentSession(activeSession);
 				const admittedMessages = activeSession.messages.length > messagesBeforeAttempt.length;
@@ -1025,8 +1028,9 @@ export class StageSessionController {
 		});
 		let created: StageSessionRuntime | StageSessionCreateResult;
 		try {
-			created = this.opts.adapters.agentSession
-				? await this.opts.adapters.agentSession.create(
+			const sessionAdapter = resolveSessionAdapter(this.opts.adapters, this.meta.sessionAdapter);
+			created = sessionAdapter
+				? await sessionAdapter.create(
 						stripWorkflowOnlyOptions(
 							stageOptions,
 							this.opts.defaultSessionDir,
@@ -1194,7 +1198,7 @@ export class StageSessionController {
 			}
 			const message = errorMessage(err);
 			this.modelAttempts.push({ model: resumedLabel, success: false, error: message });
-			if (this.opts.signal?.aborted || !isRetryableModelFailure(err)) {
+			if (this.opts.signal?.aborted || !this.adapterAllowsRetry() || !isRetryableModelFailure(err)) {
 				this.modelWarnings.push(...this.pendingFallbackWarnings);
 				this.pendingFallbackWarnings.length = 0;
 				this.notifyModelFallbackMetaChange();
@@ -1239,7 +1243,12 @@ export class StageSessionController {
 			...modelAttemptReasoning(candidate, this.effectiveStageOptions?.thinkingLevel),
 			error: message,
 		});
-		if (this.opts.signal?.aborted || !isRetryableModelFailure(err) || index === candidates.length - 1) {
+		if (
+			this.opts.signal?.aborted ||
+			!this.adapterAllowsRetry() ||
+			!isRetryableModelFailure(err) ||
+			index === candidates.length - 1
+		) {
 			this.modelWarnings.push(...this.pendingFallbackWarnings);
 			this.pendingFallbackWarnings.length = 0;
 			this.notifyModelFallbackMetaChange();
@@ -1255,6 +1264,10 @@ export class StageSessionController {
 
 	private capturedStructuredOutputForAttempt(): boolean {
 		return this.structuredOutputCapture?.called === true && this.opts.signal?.aborted !== true;
+	}
+
+	private adapterAllowsRetry(): boolean {
+		return resolveSessionAdapter(this.opts.adapters, this.meta.sessionAdapter)?.retryPolicy !== "never";
 	}
 
 	private recordSuccessfulAttempt(candidate: WorkflowResolvedModelCandidate): void {

@@ -112,6 +112,7 @@ export class ScopedDurableBackend implements DurableWorkflowBackend {
 		| {
 				sessionId?: string;
 				sessionFile?: string;
+				sessionAdapter?: import("../shared/types.js").SessionAdapterSelector;
 				startedAt?: number;
 				durationMs?: number;
 		  }
