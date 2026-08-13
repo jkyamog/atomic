@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - Added named external `AgentSessionAdapter` selection for workflow stages through the serializable `sessionAdapter: { name, config }` option. Extensions register adapters over a versioned shared-event-bus protocol; ordinary stages continue to use Atomic's local adapter. Adapter identity survives live snapshots, session-entry restore, DBOS replay, completed-run inspection, and post-mortem stage chat, while unknown and conflicting registrations fail explicitly. External transports may declare `retryPolicy: "never"` to surface failures without hidden same-model retry or fallback-session replacement.
+- Named external session adapters can now preserve a stable transport identity across reconnects while keeping `retryPolicy: "never"`; checksum-verified local transcript mirrors remain eligible for post-mortem chat through the retained adapter selector.
 
 ## [0.9.13-alpha.2] - 2026-08-12
 

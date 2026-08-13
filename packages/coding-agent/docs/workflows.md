@@ -2135,11 +2135,11 @@ pi.events.on(SESSION_ADAPTER_DISCOVER_EVENT, () => {
 });
 ```
 
-Atomic retains `sessionAdapter` in live snapshots, session-entry restore, durable stage checkpoints, completed-run inspection, and post-mortem stage handles. Reopening a completed stage therefore uses the same adapter and configuration rather than silently falling back to the local runtime. A missing adapter fails clearly and lists registered names; duplicate registration of the same adapter is harmless, while another adapter claiming an existing name is rejected. Stages without `sessionAdapter` are unchanged.
+Atomic retains `sessionAdapter` in live snapshots, session-entry restore, durable stage checkpoints, completed-run inspection, and post-mortem stage handles. Reopening a completed stage therefore uses the same adapter and configuration rather than silently falling back to the local runtime. Remote adapters can mirror a valid transcript locally for inspection and reopen while keeping transport identity and recovery private to the adapter. A missing adapter fails clearly and lists registered names; duplicate registration of the same adapter is harmless, while another adapter claiming an existing name is rejected. Stages without `sessionAdapter` are unchanged.
 
 The adapter owns one stage session only. Use `ctx.parallel` and its `concurrency` option for fan-out; do not make one adapter instance multiplex workflow items internally.
 
-External transports that must not reconnect implicitly can declare `retryPolicy: "never"` on their `AgentSessionAdapter`. Atomic surfaces a thrown creation or prompt failure immediately instead of applying same-model retry or replacing the session through `fallbackModels`; recovery then happens only through an explicit workflow resume.
+External transports may declare `retryPolicy: "never"` so Atomic does not create a second stage attempt. Such an adapter may still reconnect the same transport-owned session after a lost reply when it can prove whether the prompt was accepted. It must never resend on an uncertain transcript tail.
 
 Creates and registers a named stage synchronously; work starts when you call a method such as `prompt()` or `complete()`. Use it when `ctx.task` is too coarse and direct session control is required.
 
