@@ -20,6 +20,7 @@ import { store as defaultStore, type Store } from "../shared/store.js";
 import type { WorkflowActor } from "../shared/store-types.js";
 import {
 	INTERACTIVE_WORKFLOW_POLICY,
+	type SessionAdapterSelector,
 	type WorkflowExecutionPolicy,
 	type WorkflowMcpPort,
 	type WorkflowModelCatalogPort,
@@ -90,6 +91,8 @@ export interface DispatcherOpts {
 	cwd?: string;
 	/** Host-resolved non-default session directory inherited by stages without explicit sessionDir. */
 	defaultSessionDir?: string;
+	/** Run-level session adapter selector applied to the dispatched run's stages. */
+	sessionAdapter?: SessionAdapterSelector;
 }
 
 // ---------------------------------------------------------------------------
@@ -180,6 +183,7 @@ export async function dispatch(args: WorkflowToolArgs, opts: DispatcherOpts): Pr
 				launch = launchDetachedUntilStartup(def, inputs, {
 					registry: opts.registry,
 					adapters: opts.adapters,
+					...(opts.sessionAdapter !== undefined ? { sessionAdapter: opts.sessionAdapter } : {}),
 					store: opts.store,
 					cancellation: opts.cancellation,
 					jobs: opts.jobs,
