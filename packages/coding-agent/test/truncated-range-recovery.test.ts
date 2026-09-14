@@ -158,6 +158,23 @@ describe("parseRangeRecords: complete output", () => {
 	it("accepts zero as an endpoint", () => {
 		expect(parseRangeRecords("0,5\n")).toEqual([{ start: 0, end: 5 }]);
 	});
+
+	it("tolerates leading blank lines before the first record", () => {
+		// Regression: model opened with stray newlines before valid records.
+		expect(parseRangeRecords("\n\n419,1025\n169,175\n1,142")).toEqual([
+			{ start: 419, end: 1025 },
+			{ start: 169, end: 175 },
+			{ start: 1, end: 142 },
+		]);
+	});
+
+	it("still rejects blank lines between records", () => {
+		expect(parseRangeRecords("5,10\n\n20,30\n")).toBeUndefined();
+	});
+
+	it("returns undefined for blank lines only", () => {
+		expect(parseRangeRecords("\n\n")).toBeUndefined();
+	});
 });
 
 // 2. Length-stop truncation at various positions
@@ -247,6 +264,16 @@ describe("recoverTruncatedRecords: invalid middle line rejection", () => {
 
 	it("rejects blank lines in completed portion", () => {
 		expect(recoverTruncatedRecords("5,10\n\n20,30\n")).toBeUndefined();
+	});
+
+	it("tolerates leading blank lines before the first completed record", () => {
+		const result = recoverTruncatedRecords("\n\n5,10\n20,30\n40");
+		expect(result).toBeDefined();
+		expect(result!.ranges).toEqual([
+			{ start: 5, end: 10 },
+			{ start: 20, end: 30 },
+		]);
+		expect(result!.recoveredCount).toBe(2);
 	});
 
 	it("rejects exponent notation", () => {
