@@ -63,6 +63,8 @@ function parseRecord(line: string): RawLineRange | undefined {
  * Returns undefined if the text contains zero valid records or any syntax error.
  *
  * For a normal (non-length) completion, the final record may omit a trailing newline.
+ * Leading blank lines are tolerated (models sometimes open with stray newlines);
+ * blank lines between records are still a syntax error.
  * Every record must pass strict grammar validation.
  */
 export function parseRangeRecords(text: string): RawLineRange[] | undefined {
@@ -70,7 +72,10 @@ export function parseRangeRecords(text: string): RawLineRange[] | undefined {
 	// Split on newlines; if the text ends with \n the last element will be empty
 	const lines = text.split("\n");
 	const ranges: RawLineRange[] = [];
-	for (let i = 0; i < lines.length; i++) {
+	// Tolerate leading blank lines before the first record.
+	let i = 0;
+	while (i < lines.length && lines[i] === "") i++;
+	for (; i < lines.length; i++) {
 		const line = lines[i];
 		// Skip trailing empty string from final newline
 		if (i === lines.length - 1 && line === "") continue;
@@ -89,7 +94,8 @@ export function parseRangeRecords(text: string): RawLineRange[] | undefined {
  * syntactically valid, because EOF may have cut a multi-digit integer.
  *
  * Every completed line must be valid; invalid syntax in any completed line
- * causes full rejection (returns undefined).
+ * causes full rejection (returns undefined). Leading blank lines before the
+ * first record are tolerated.
  *
  * Returns undefined if zero usable records are recovered.
  */
@@ -103,7 +109,11 @@ export function recoverTruncatedRecords(text: string): TruncatedRecoveryResult |
 
 	const lines = completedPortion.split("\n");
 	const ranges: RawLineRange[] = [];
-	for (const line of lines) {
+	// Tolerate leading blank lines before the first record.
+	let i = 0;
+	while (i < lines.length && lines[i] === "") i++;
+	for (; i < lines.length; i++) {
+		const line = lines[i];
 		if (line === "") return undefined; // blank line = invalid
 		const record = parseRecord(line);
 		if (!record) return undefined; // invalid syntax in completed line → reject all
