@@ -37,7 +37,7 @@ function readRequestTimeoutMs(): number {
   const parsed = Number.parseInt(raw, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REQUEST_TIMEOUT_MS;
 }
-const REQUEST_TIMEOUT_MS = readRequestTimeoutMs();
+export const REQUEST_TIMEOUT_MS = readRequestTimeoutMs();
 const GROUP_REQUEST_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 const PRESENCE_ACK_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 
