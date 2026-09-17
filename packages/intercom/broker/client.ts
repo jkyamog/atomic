@@ -23,8 +23,22 @@ import { normalizeGroups } from "../group.js";
 import { IntercomClientDisconnectedError } from "../recoverable-disconnect.js";
 
 const BROKER_SOCKET = getBrokerSocketPath();
-const GROUP_REQUEST_TIMEOUT_MS = 5000;
-const PRESENCE_ACK_TIMEOUT_MS = 5000;
+/**
+ * Shared broker round-trip timeout for list/group/membership/presence/supervisor
+ * requests. On resource-constrained hosts the broker's event loop can stall long
+ * enough to trip the historical 5s window; override with
+ * INTERCOM_REQUEST_TIMEOUT_MS (milliseconds) to widen it.
+ */
+const DEFAULT_REQUEST_TIMEOUT_MS = 5000;
+function readRequestTimeoutMs(): number {
+  const raw = process.env.INTERCOM_REQUEST_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_REQUEST_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REQUEST_TIMEOUT_MS;
+}
+const REQUEST_TIMEOUT_MS = readRequestTimeoutMs();
+const GROUP_REQUEST_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
+const PRESENCE_ACK_TIMEOUT_MS = REQUEST_TIMEOUT_MS;
 
 
 export interface SendOptions {
@@ -770,7 +784,7 @@ export class IntercomClient extends EventEmitter {
 		const timeout = setTimeout(() => {
 			if (!this.pendingLists.delete(requestId)) return;
 			reject(new Error("List sessions timeout"));
-		}, 5000);
+		}, REQUEST_TIMEOUT_MS);
 		this.pendingLists.set(requestId, {
 			resolve: (directory) => {
 				clearTimeout(timeout);
@@ -867,7 +881,7 @@ export class IntercomClient extends EventEmitter {
       const timeout = setTimeout(() => {
         if (!this.pendingSupervisorAuthorizations.delete(requestId)) return;
         reject(new Error("Supervisor authorization timeout"));
-      }, 5000);
+      }, REQUEST_TIMEOUT_MS);
       this.pendingSupervisorAuthorizations.set(requestId, {
         resolve: (authorization) => { clearTimeout(timeout); resolve(authorization); },
         reject: (error) => { clearTimeout(timeout); reject(error); },
