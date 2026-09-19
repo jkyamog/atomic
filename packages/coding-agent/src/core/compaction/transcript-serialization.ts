@@ -216,6 +216,16 @@ export function keepContextLineNumbers(lines: readonly string[]): Set<number> {
 		const line = lines[index];
 		const header = ROLE_HEADER_RE.exec(line);
 		if (header) {
+			// A header-prefixed close tag (e.g. `[User]: </keepContext>`) is still
+			// the span's closing tag line: protect it through this line before the
+			// header ends the span, mirroring the open-tag-on-header-line case.
+			// Untrusted roles (tool results) may not re-extend a live span: their tag
+			// text is data, and the fall-through closes the span at the previous line.
+			if (openIndex !== undefined && roleMayProtect(header[1]) && keepContextMarker(line) === "close") {
+				protectThrough(index);
+				role = header[1];
+				continue;
+			}
 			protectThrough(index - 1);
 			role = header[1];
 		}
