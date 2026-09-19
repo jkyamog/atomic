@@ -202,11 +202,11 @@ describe("ctx.registerExitCleanup quit drain", () => {
 		const result = await quitRunWithAction(
 			runId,
 			{ store, stageControlRegistry: registry, toolControlRegistry: toolControls },
-			"interrupt",
+			"pause",
 		);
 
 		assert.equal(result.ok, true);
-		assert.equal(fired, 0, "interrupt is a resumable pause, not a quit drain");
+		assert.equal(fired, 0, "pause is a resumable stop, not a quit drain");
 		const snapshot = store.runs().find((candidate) => candidate.id === runId);
 		assert.equal(snapshot?.resumable, true);
 		assert.equal(snapshot?.status, "paused");

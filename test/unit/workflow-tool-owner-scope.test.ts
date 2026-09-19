@@ -106,6 +106,9 @@ test("registered slash pause keeps its controls and store across a sibling adopt
 		},
 		async resume() {},
 		async quit() {},
+		async drainExitCleanups() {
+			return [];
+		},
 	});
 	adoptWorkflowSessionRunState({}, true);
 	try {
