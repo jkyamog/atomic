@@ -314,10 +314,10 @@ export async function handleRunControlCommand(
 								result.ok
 									? print(result.message ?? `Resumed ${result.runId}`)
 									: fail(
-												result.reason === "not_resumable"
-													? `Run ${picked.result.runId} is not resumable — its stop is terminal. Start a new run to continue.`
-													: `Run not found: ${picked.result.runId}`,
-											);
+											result.reason === "not_resumable"
+												? `Run ${picked.result.runId} is not resumable — its stop is terminal. Start a new run to continue.`
+												: `Run not found: ${picked.result.runId}`,
+										);
 							}
 						} catch (error) {
 							fail(

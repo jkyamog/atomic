@@ -10,11 +10,11 @@ import {
 	quitRunWithAction,
 } from "../../packages/workflows/src/runs/background/quit.js";
 import { resumeRun } from "../../packages/workflows/src/runs/background/status.js";
-import { createWorkflowExitManager } from "../../packages/workflows/src/runs/foreground/executor-exit-manager.js";
 import { run } from "../../packages/workflows/src/runs/foreground/executor.js";
+import { createWorkflowExitManager } from "../../packages/workflows/src/runs/foreground/executor-exit-manager.js";
 import { createStageControlRegistry } from "../../packages/workflows/src/runs/foreground/stage-control-registry.js";
-import type { WorkflowRunContext } from "../../packages/workflows/src/shared/types.js";
 import { createStore } from "../../packages/workflows/src/shared/store.js";
+import type { WorkflowRunContext } from "../../packages/workflows/src/shared/types.js";
 
 /**
  * Build a workflow whose run body registers a cleanup and then blocks in a
@@ -56,20 +56,21 @@ describe("ctx.registerExitCleanup quit drain", () => {
 		const runId = "quit-cleanup-drain";
 		let fired = 0;
 		const { definition, entered } = makeHangWorkflow(runId, (ctx) => {
-			ctx.registerExitCleanup(
-				() => {
-					fired += 1;
-				},
-				"drain-check",
-			);
+			ctx.registerExitCleanup(() => {
+				fired += 1;
+			}, "drain-check");
 		});
-		const execution = run(definition, {}, {
-			runId,
-			store,
-			stageControlRegistry: registry,
-			toolControlRegistry: toolControls,
-			durableBackend: backend,
-		});
+		const execution = run(
+			definition,
+			{},
+			{
+				runId,
+				store,
+				stageControlRegistry: registry,
+				toolControlRegistry: toolControls,
+				durableBackend: backend,
+			},
+		);
 		await entered.promise;
 
 		const result = await quitRun(runId, { store, stageControlRegistry: registry, toolControlRegistry: toolControls });
@@ -78,9 +79,10 @@ describe("ctx.registerExitCleanup quit drain", () => {
 		assert.equal(fired, 1, "the drain settled the cleanup before the quit result resolved");
 		if (result.ok) {
 			assert.equal(result.abandonedCleanups, undefined);
-			assert.deepEqual(result.cancelledTools.map((entry) => [entry.node.name, entry.node.status]), [
-				["hang", "cancelled"],
-			]);
+			assert.deepEqual(
+				result.cancelledTools.map((entry) => [entry.node.name, entry.node.status]),
+				[["hang", "cancelled"]],
+			);
 			assert.deepEqual(result.abandonedTools, []);
 		}
 		assert.equal(store.runs().find((candidate) => candidate.id === runId)?.resumable, true);
@@ -96,20 +98,21 @@ describe("ctx.registerExitCleanup quit drain", () => {
 		const toolControls = createToolControlRegistry();
 		const runId = "quit-cleanup-hang";
 		const { definition, entered } = makeHangWorkflow(runId, (ctx) => {
-			ctx.registerExitCleanup(
-				async () => {
-					await new Promise<void>(() => {}); // never settles
-				},
-				"hang-cleanup",
-			);
+			ctx.registerExitCleanup(async () => {
+				await new Promise<void>(() => {}); // never settles
+			}, "hang-cleanup");
 		});
-		const execution = run(definition, {}, {
-			runId,
-			store,
-			stageControlRegistry: registry,
-			toolControlRegistry: toolControls,
-			durableBackend: backend,
-		});
+		const execution = run(
+			definition,
+			{},
+			{
+				runId,
+				store,
+				stageControlRegistry: registry,
+				toolControlRegistry: toolControls,
+				durableBackend: backend,
+			},
+		);
 		await entered.promise;
 
 		const result = await quitRun(runId, {
@@ -136,20 +139,21 @@ describe("ctx.registerExitCleanup quit drain", () => {
 		const runId = "quit-cleanup-terminal";
 		let fired = 0;
 		const { definition, entered } = makeHangWorkflow(runId, (ctx) => {
-			ctx.registerExitCleanup(
-				() => {
-					fired += 1;
-				},
-				"terminal-drain",
-			);
+			ctx.registerExitCleanup(() => {
+				fired += 1;
+			}, "terminal-drain");
 		});
-		const execution = run(definition, {}, {
-			runId,
-			store,
-			stageControlRegistry: registry,
-			toolControlRegistry: toolControls,
-			durableBackend: backend,
-		});
+		const execution = run(
+			definition,
+			{},
+			{
+				runId,
+				store,
+				stageControlRegistry: registry,
+				toolControlRegistry: toolControls,
+				durableBackend: backend,
+			},
+		);
 		await entered.promise;
 
 		const result = await quitRun(runId, {
@@ -183,20 +187,21 @@ describe("ctx.registerExitCleanup quit drain", () => {
 		const runId = "interrupt-cleanup-pause";
 		let fired = 0;
 		const { definition, entered } = makeHangWorkflow(runId, (ctx) => {
-			ctx.registerExitCleanup(
-				() => {
-					fired += 1;
-				},
-				"interrupt-skip",
-			);
+			ctx.registerExitCleanup(() => {
+				fired += 1;
+			}, "interrupt-skip");
 		});
-		const execution = run(definition, {}, {
-			runId,
-			store,
-			stageControlRegistry: registry,
-			toolControlRegistry: toolControls,
-			durableBackend: backend,
-		});
+		const execution = run(
+			definition,
+			{},
+			{
+				runId,
+				store,
+				stageControlRegistry: registry,
+				toolControlRegistry: toolControls,
+				durableBackend: backend,
+			},
+		);
 		await entered.promise;
 
 		const result = await quitRunWithAction(
@@ -222,12 +227,9 @@ describe("run-level exit cleanup drain semantics", () => {
 			controller: new AbortController(),
 		});
 		let fired = 0;
-		const unregister = manager.registerRunExitCleanup(
-			() => {
-				fired += 1;
-			},
-			"once",
-		);
+		const unregister = manager.registerRunExitCleanup(() => {
+			fired += 1;
+		}, "once");
 		unregister();
 		const unregistered = await manager.drainRunExitCleanups(500);
 		assert.deepEqual(unregistered, []);

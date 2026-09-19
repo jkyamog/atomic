@@ -129,10 +129,7 @@ export function createWorkflowExitManager(input: {
 			invokeRunExitCleanup(entry.name, entry.cleanup, reason);
 		}
 	};
-	const registerRunExitCleanup = (
-		cleanup: (reason?: string) => void | Promise<void>,
-		name?: string,
-	): (() => void) => {
+	const registerRunExitCleanup = (cleanup: (reason?: string) => void | Promise<void>, name?: string): (() => void) => {
 		const entry = { name: name ?? "exit-cleanup", cleanup };
 		runExitCleanups.push(entry);
 		return () => {
@@ -292,8 +289,8 @@ export function createWorkflowExitManager(input: {
 		registerWorkflowExitCleanup,
 		runWorkflowExitCleanups,
 		drainWorkflowExitCleanups,
-	registerRunExitCleanup,
-	drainRunExitCleanups,
+		registerRunExitCleanup,
+		drainRunExitCleanups,
 		throwIfWorkflowExitSelected,
 		exit,
 	};
