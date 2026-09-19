@@ -366,7 +366,7 @@ describe("workflow control lifecycle notices", () => {
 				["paused", "resumed", "quit"],
 				"a quit never also reports the pause it publishes",
 			);
-			assert.equal(sent[2]?.details?.resumable, true);
+			assert.equal(sent[2]?.details?.resumable, false);
 		} finally {
 			unsubscribe();
 		}

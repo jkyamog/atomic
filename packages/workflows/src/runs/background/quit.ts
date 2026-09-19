@@ -32,6 +32,12 @@ import {
 } from "../foreground/stage-control-registry.js";
 import { jobTracker as defaultJobTracker, type JobTracker } from "./job-tracker.js";
 import { aggregateWorkflowRootRunId, expandedControlRunIds } from "./workflow-lifecycle-aggregate.js";
+/**
+ * Bounded wait for `ctx.registerExitCleanup` cleanups to settle during a
+ * quit. A hanging cleanup must never pin the quit: it is abandoned, reported
+ * in the result's `abandonedCleanups`, and is not retried.
+ */
+export const EXIT_CLEANUP_QUIT_TIMEOUT_MS = 30_000;
 
 export type QuitRunResult =
 	| {
@@ -42,6 +48,8 @@ export type QuitRunResult =
 			readonly cancelledTools: readonly WorkflowCancelledToolNode[];
 			/** Aborted nodes whose callback ignored its signal within the bounded wait. */
 			readonly abandonedTools: readonly WorkflowToolNodeIdentity[];
+			/** Run-level exit cleanups not settled within the quit drain bound. */
+			readonly abandonedCleanups?: readonly string[];
 			/** Runtime suspension caveat when no node could acknowledge control. */
 			readonly message?: string;
 	  }
@@ -73,7 +81,10 @@ type QuitAllRunResult =
  *    shrink, so one scan is enough and no rescan loop can spin;
  * 4. abort that set, wait a bounded interval, and publish settled/abandoned
  *    nodes as cancelled;
- * 5. only then record the durable paused transition and the resumable run.
+ * 5. drain the run-level exit cleanups registered through
+ *    `ctx.registerExitCleanup`, bounded per cleanup — "interrupt" never
+ *    drains because it is a resumable pause, not a quit;
+ * 6. only then record the durable paused transition and the resumable run.
  *
  * Step 4 is the point of no return: an aborted callback cannot be un-aborted,
  * and the executor that observed the abort suspends without writing any
@@ -88,6 +99,12 @@ type QuitAllRunResult =
  * It deliberately does NOT abort through the cancellation registry or append a
  * terminal `workflow.run.end` entry. Destructive cancellation remains an
  * internal lifecycle mechanism.
+ *
+ * An explicit quit — requested by a user or an agent, i.e. with `actor` set —
+ * is terminal: the local record and the durable transition publish
+ * `resumable: false`, so no resume surface offers the run again. Stop, reap,
+ * rerun. Internal and process-boundary stops (no actor) and "interrupt"
+ * actions remain resumable pauses.
  *
  * A quit publishes its stage pauses in step 1, long before step 5 can record the
  * quit itself, so the run passes through an ordinary paused state on the way.
@@ -110,6 +127,8 @@ export async function quitRunWithAction(
 				jobs?: JobTracker;
 				/** Who requested this quit. Omitted for internal callers. */
 				actor?: WorkflowActor;
+				/** Per-cleanup bound for the exit-cleanup drain. Defaults to EXIT_CLEANUP_QUIT_TIMEOUT_MS. */
+				cleanupDrainTimeoutMs?: number;
 		  }
 		| undefined,
 	action: "quit" | "interrupt",
@@ -121,6 +140,10 @@ export async function quitRunWithAction(
 	const run = activeStore.runs().find((candidate) => candidate.id === runId);
 	if (!run) return { ok: false, runId, reason: "not_found" };
 	if (run.endedAt !== undefined) return { ok: false, runId, reason: "already_ended" };
+	// An explicit quit (user or agent requester) is terminal: the stop is
+	// published `resumable: false` so no resume surface offers the run again.
+	// Internal and process-boundary stops stay resumable pauses.
+	const terminal = action === "quit" && opts?.actor !== undefined;
 	workflowObservationRuntime(activeStore).control(runId, action, opts?.actor);
 	const aggregateRootRunId = aggregateWorkflowRootRunId(activeStore, runId);
 	if (aggregateRootRunId !== runId) {
@@ -214,13 +237,36 @@ export async function quitRunWithAction(
 	};
 	const needsProgressCheck = runtimeQuit !== undefined || (current.resumable === false && graph.nodes.length === 0);
 	const durableHandle = needsProgressCheck ? discoverDurableQuitBackend(runId)?.getWorkflow(runId) : undefined;
-	const resumable =
-		!needsProgressCheck ||
-		(durableHandle !== undefined &&
-			isDurableWorkflowResumable({ ...durableHandle, status: "paused", resumable: true }));
+	const resumable = terminal
+		? false
+		: !needsProgressCheck ||
+			(durableHandle !== undefined &&
+				isDurableWorkflowResumable({ ...durableHandle, status: "paused", resumable: true }));
 	// The executor has relinquished ownership. Report that local stop even if
 	// the non-cancellable durable write stalls; only its completion permits resume.
 	if (runtimeQuit !== undefined) publishLocalQuit(activeStore, runId, pausedRunIds, false);
+	// Run-level exit cleanups registered via ctx.registerExitCleanup drain on
+	// a true quit only: "interrupt" is a resumable pause, and cleanups that
+	// tear down run-owned resources must not fire on it. The bound applies
+	// per cleanup (they run in parallel); anything still pending at the
+	// deadline is abandoned, reported, and never retried. The drain awaits,
+	// so it must come after the early local publication above: the drain's
+	// yields are scheduling windows in which a concurrent unadmitted-run
+	// discard could otherwise remove the still-"running" record and turn the
+	// post-drain lookup below into a spurious not_found.
+	const abandonedCleanups: string[] = [];
+	if (action === "quit") {
+		const drainBound = opts?.cleanupDrainTimeoutMs ?? EXIT_CLEANUP_QUIT_TIMEOUT_MS;
+		const drained = await Promise.all(
+			expandedControlRunIds(activeStore, runId).map((controlRunId) => {
+				const control = toolControls.runControl(controlRunId);
+				return control === undefined
+					? Promise.resolve([] as readonly string[])
+					: control.drainExitCleanups(drainBound);
+			}),
+		);
+		for (const names of drained) abandonedCleanups.push(...names);
+	}
 	let durableTransition: DurableQuitOutcome;
 	try {
 		durableTransition = await markDurableQuit(runId, current, resumable);
@@ -234,11 +280,23 @@ export async function quitRunWithAction(
 		return { ok: false, runId, reason: "already_ended" };
 	}
 	publish(resumable);
+	const cleanupCaveat =
+		abandonedCleanups.length === 0
+			? ""
+			: ` Abandoned ${abandonedCleanups.length} exit cleanup(s) that did not settle within the drain bound: ${abandonedCleanups.join(", ")}; their side effects may be incomplete.`;
 	const message =
-		runtimeQuit !== undefined || !resumable
-			? `Run ${runId} quit. ${runtimeQuit === undefined ? "" : "No further workflow steps will be admitted; untracked initialization or workflow code may still finish. "}${resumable ? "Resume with /workflow resume." : "No durable progress was recorded; this run cannot be resumed."}`
+		runtimeQuit !== undefined || !resumable || abandonedCleanups.length > 0
+			? `Run ${runId} quit. ${runtimeQuit === undefined ? "" : "No further workflow steps will be admitted; untracked initialization or workflow code may still finish. "}${terminal ? "This run is terminal and cannot be resumed; start a new run to continue." : resumable ? "Resume with /workflow resume." : "No durable progress was recorded; this run cannot be resumed."}${cleanupCaveat}`
 			: undefined;
-	return { ok: true, runId, paused, cancelledTools, abandonedTools, ...(message === undefined ? {} : { message }) };
+	return {
+		ok: true,
+		runId,
+		paused,
+		cancelledTools,
+		abandonedTools,
+		...(abandonedCleanups.length > 0 ? { abandonedCleanups } : {}),
+		...(message === undefined ? {} : { message }),
+	};
 }
 
 /**
@@ -247,8 +305,9 @@ export async function quitRunWithAction(
  * `resumable` follows the durable outcome rather than the local one: a pause the
  * durable backend never accepted is still real — the run stopped — but no future
  * process could resume from it, so it is not advertised as resumable. Recording
- * it keeps the run controllable, so a later `/workflow quit` re-attempts the
- * transition and upgrades the record.
+ * it keeps the run controllable, so a later actor-less quit re-attempts the
+ * transition and can upgrade the record. An explicit (actor-bearing) quit is
+ * terminal: its retries keep the record `resumable: false`.
  *
  * The boundary run is deliberately excluded from the descendant loop: a bare
  * `recordRunPaused(runId)` first would publish a plain paused state, and a

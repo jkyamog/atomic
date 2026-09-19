@@ -49,6 +49,13 @@ export interface WorkflowRunControlHandle {
 	pause(): Promise<void>;
 	resume(): Promise<void>;
 	quit(): Promise<void>;
+	/**
+	 * Fire the run-level exit cleanups registered through
+	 * `ctx.registerExitCleanup` and wait for them up to `timeoutMs` (per
+	 * cleanup; they run in parallel). Returns the names still pending when
+	 * the bound expires. Firing is at most once per run.
+	 */
+	drainExitCleanups(timeoutMs: number): Promise<readonly string[]>;
 }
 
 export interface ToolControlRegistry {

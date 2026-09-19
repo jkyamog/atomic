@@ -90,7 +90,7 @@ describe("/workflow run-control chat commands", () => {
 		assert.match(joined, /Picker requires an interactive UI surface/);
 	});
 
-	test.sequential("top-level /workflow quit <id> pauses and preserves resumability without confirmation", async () => {
+	test.sequential("top-level /workflow quit <id> pauses terminally without confirmation", async () => {
 		const runId = testRunId(`quit-chat-${Date.now()}`);
 		store.recordRunStart(makeInflightRun(runId));
 		registerTestStageHandle(runId, "quit-stage");
@@ -125,10 +125,10 @@ describe("/workflow run-control chat commands", () => {
 		assert.equal(run?.status, "paused");
 		assert.equal(run?.endedAt, undefined);
 		assert.equal(run?.exitReason, "quit");
-		assert.equal(run?.resumable, true);
+		assert.equal(run?.resumable, false);
 		assert.equal(controller.signal.aborted, false);
 		assert.equal(
-			msgs.some((message) => /quit.*resume|resume.*quit/i.test(message)),
+			msgs.some((message) => /terminal and cannot be resumed/.test(message)),
 			true,
 		);
 		assert.equal(
@@ -219,9 +219,9 @@ describe("/workflow run-control chat commands", () => {
 		const run = store.runs().find((candidate) => candidate.id === runId);
 		assert.equal(run?.status, "paused");
 		assert.equal(run?.endedAt, undefined);
-		assert.equal(run?.resumable, true);
+		assert.equal(run?.resumable, false);
 		assert.equal(
-			messages.some((message) => /resume/i.test(message)),
+			messages.some((message) => /terminal and cannot be resumed/.test(message)),
 			true,
 		);
 	});

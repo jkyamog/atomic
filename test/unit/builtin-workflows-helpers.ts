@@ -58,6 +58,7 @@ export interface MockCalls {
 	readonly taskOptions: Record<string, WorkflowTaskOptions[]>;
 	readonly tool: string[];
 	readonly uiSelects: { message: string; options: readonly string[] }[];
+	readonly exitCleanups: string[];
 }
 
 /**
@@ -153,6 +154,7 @@ export function makeMockCtx<TInputs extends WorkflowInputValues>(
 		taskOptions: {},
 		tool: [],
 		uiSelects: [],
+		exitCleanups: [],
 	};
 
 	const ui: WorkflowUIContext = {
@@ -210,6 +212,10 @@ export function makeMockCtx<TInputs extends WorkflowInputValues>(
 		...(responders.cwd === undefined ? {} : { cwd: responders.cwd }),
 		exit: () => {
 			throw new Error("ctx.exit should not be used by builtin workflow mocks");
+		},
+		registerExitCleanup: (_cleanup, name) => {
+			calls.exitCleanups.push(name ?? "exit-cleanup");
+			return () => {};
 		},
 		stage: (name: string) => {
 			calls.stage.push(name);

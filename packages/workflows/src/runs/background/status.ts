@@ -68,7 +68,7 @@ export type ResumeResult =
 			mode?: "snapshot" | "paused" | "partial" | "not_resumable";
 			message?: string;
 	  }
-	| { ok: false; runId: string; reason: "not_found" };
+	| { ok: false; runId: string; reason: "not_found" | "not_resumable" };
 
 export type PauseResult =
 	| {
@@ -225,10 +225,14 @@ function ownedRuntimeControls(activeStore: Store, toolControls: ToolControlRegis
  * Reopen a run for display, awaiting every live stage-control resume before
  * recording the corresponding store and durable transitions.
  *
- * Non-paused and terminal runs still return a read-only snapshot. Every
- * paused control is attempted. An all-failed acknowledgement set rejects;
- * partial success returns the actual running/paused split with qualified
- * failures so callers never misreport externally visible progress as a no-op.
+ * A terminal quit record (`exitReason: "quit"` with `resumable: false` — an
+ * explicit actor-bearing quit) is final: it rejects up front with
+ * `not_resumable` instead of reopening anything. Other non-resumable terminal
+ * records (killed, failed, completed) keep the legacy mode-based response
+ * below. Every paused control of a resumable run is attempted. An all-failed
+ * acknowledgement set rejects; partial success returns the actual
+ * running/paused split with qualified failures so callers never misreport
+ * externally visible progress as a no-op.
  */
 export async function resumeRun(
 	runId: string,
@@ -251,6 +255,13 @@ export async function resumeRun(
 
 	if (!run) return { ok: false, runId, reason: "not_found" };
 	workflowObservationRuntime(activeStore).control(runId, "resume", opts?.actor);
+	// A terminal quit (an explicit actor-bearing quit publishes
+	// `exitReason: "quit"` with `resumable: false`) is final: no resume
+	// surface may reopen it. Other non-resumable terminal records (killed,
+	// failed, completed) keep the legacy mode-based response further below.
+	if (run.resumable === false && run.exitReason === "quit") {
+		return { ok: false, runId, reason: "not_resumable" };
+	}
 
 	const runtimeControls =
 		opts?.stageId === undefined
