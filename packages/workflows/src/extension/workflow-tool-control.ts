@@ -479,6 +479,18 @@ export async function workflowResumeAction(
 		return { action: "resume", runId: target.runId, status: "noop", message: requestedStage.message };
 	const backend = getDurableBackend();
 	const exact = store.runs().find((run) => run.id === target.runId);
+	// A terminal quit record (`exitReason: "quit"` with `resumable: false` —
+	// an explicit actor-bearing quit) is final: no resume surface may reopen
+	// it, even one with durable progress behind it. Other non-resumable
+	// terminal records keep the legacy stale/shadow classification below.
+	if (exact?.resumable === false && exact.exitReason === "quit") {
+		return {
+			action: "resume",
+			runId: target.runId,
+			status: "noop",
+			message: `Run ${target.runId} is not resumable — its stop is terminal. Start a new run to continue.`,
+		};
+	}
 	const shadow =
 		exact === undefined
 			? "not_shadow"
@@ -588,7 +600,15 @@ export async function workflowResumeAction(
 			const status = result.mode === "partial" ? "partial" : noContinuation || noPausedProgress ? "noop" : "ok";
 			return { action: "resume", runId: result.runId, status, message };
 		}
-		return { action: "resume", runId: stageRunId, status: "noop", message: `Run not found: ${stageRunId}` };
+		return {
+			action: "resume",
+			runId: stageRunId,
+			status: "noop",
+			message:
+				result.reason === "not_resumable"
+					? `Run ${stageRunId} is not resumable — its stop is terminal. Start a new run to continue.`
+					: `Run not found: ${stageRunId}`,
+		};
 	} catch (error) {
 		return resumeControlFailure(stageRunId, error, store);
 	}

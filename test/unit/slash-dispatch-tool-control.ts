@@ -81,7 +81,7 @@ describe("tool run-control actions", () => {
 		assert.doesNotMatch(textContent, /^answer:\s{2,}noop/);
 	});
 
-	test.sequential("makeExecuteWorkflowTool quit without runId pauses the active run resumably", async () => {
+	test.sequential("makeExecuteWorkflowTool quit without runId pauses the active run terminally", async () => {
 		const runId = testRunId(`quit-tool-active-${Date.now()}`);
 		store.recordRunStart(makeInflightRun(runId));
 		registerTestStageHandle(runId, "quit-stage");
@@ -95,17 +95,19 @@ describe("tool run-control actions", () => {
 		const r = result as { action: string; status: string; runId: string; message: string };
 		assert.equal(r.status, "paused");
 		assert.equal(r.runId, runId);
-		assert.match(r.message, /resume/i);
+		assert.match(r.message, /terminal and cannot be resumed/);
 		const paused = store.runs().find((run) => run.id === runId);
 		assert.equal(paused?.status, "paused");
 		assert.equal(paused?.endedAt, undefined);
 		assert.equal(paused?.exitReason, "quit");
-		assert.equal(paused?.resumable, true);
+		assert.equal(paused?.resumable, false);
 		assert.equal(controller.signal.aborted, false);
 
+		// An explicit (actor-bearing) tool quit is terminal (012 D4): the
+		// follow-up resume is refused and the run stays paused.
 		const resumed = await resumeRun(runId);
-		assert.equal(resumed.ok, true);
-		assert.equal(store.runs().find((run) => run.id === runId)?.status, "running");
+		assert.deepEqual(resumed, { ok: false, runId, reason: "not_resumable" });
+		assert.equal(store.runs().find((run) => run.id === runId)?.status, "paused");
 	});
 
 	test.sequential("makeExecuteWorkflowTool quit reports a live run with no controllable stage as unchanged", async () => {
@@ -138,7 +140,7 @@ describe("tool run-control actions", () => {
 		const r = result as { action: string; status: string; runId: string };
 		assert.equal(r.status, "paused");
 		assert.equal(r.runId, runId);
-		assert.equal(store.runs().find((run) => run.id === runId)?.resumable, true);
+		assert.equal(store.runs().find((run) => run.id === runId)?.resumable, false);
 	});
 
 	test.sequential("makeExecuteWorkflowTool quit supports all:true without ending runs", async () => {
@@ -163,7 +165,7 @@ describe("tool run-control actions", () => {
 			assert.equal(run?.status, "paused");
 			assert.equal(run?.endedAt, undefined);
 			assert.equal(run?.exitReason, "quit");
-			assert.equal(run?.resumable, true);
+			assert.equal(run?.resumable, false);
 		}
 		assert.equal(store.runs().find((run) => run.id === ended)?.status, "completed");
 	});

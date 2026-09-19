@@ -301,7 +301,13 @@ export async function handleRunControlCommand(
 					} else {
 						try {
 							const result = await resumeRun(resolved.runId, { ...owner, actor: "user" });
-							if (result.ok && !isPaused && result.mode === "snapshot" && run?.exitReason === "quit") {
+							if (
+								result.ok &&
+								!isPaused &&
+								result.mode === "snapshot" &&
+								run?.exitReason === "quit" &&
+								run?.resumable !== false
+							) {
 								return await handleDurableResume(resolved.runId, ctx, reporter, deps);
 							}
 							if (result.ok && result.mode === "partial") {
@@ -313,7 +319,11 @@ export async function handleRunControlCommand(
 									deps.overlay.open(result.runId, overlaySurfaceFromContext(ctx));
 								result.ok
 									? print(result.message ?? `Resumed ${result.runId}`)
-									: fail(`Run not found: ${picked.result.runId}`);
+									: fail(
+												result.reason === "not_resumable"
+													? `Run ${picked.result.runId} is not resumable — its stop is terminal. Start a new run to continue.`
+													: `Run not found: ${picked.result.runId}`,
+											);
 							}
 						} catch (error) {
 							fail(
@@ -348,6 +358,12 @@ export async function handleRunControlCommand(
 				? store.runs().find((run) => run.id === localResolution.runId)
 				: undefined;
 			const exactBeforePreparation = localBeforePreparation?.id === target ? localBeforePreparation : undefined;
+			if (localBeforePreparation?.resumable === false && localBeforePreparation.exitReason === "quit") {
+				fail(
+					`Run ${localBeforePreparation.id} is not resumable — its stop is terminal. Start a new run to continue.`,
+				);
+				return true;
+			}
 			const shadow =
 				localBeforePreparation === undefined
 					? "not_shadow"
@@ -524,7 +540,7 @@ export async function handleRunControlCommand(
 		// A quit, non-paused durable run is a resume shadow rather than a live
 		// stage-control pause. Routing directly to durable resume preserves the
 		// previous snapshot-only diversion without reopening a stale local overlay.
-		if (!isPaused && run?.exitReason === "quit" && action === "resume") {
+		if (!isPaused && run?.exitReason === "quit" && run?.resumable !== false && action === "resume") {
 			return await handleDurableResume(stageRunId, ctx, reporter, deps);
 		}
 		let result: Awaited<ReturnType<typeof resumeRun>>;
@@ -535,7 +551,11 @@ export async function handleRunControlCommand(
 			return true;
 		}
 		if (!result.ok) {
-			fail(`Run not found: ${stageRunId}`);
+			fail(
+				result.reason === "not_resumable"
+					? `Run ${stageRunId} is not resumable — its stop is terminal. Start a new run to continue.`
+					: `Run not found: ${stageRunId}`,
+			);
 			return true;
 		}
 		if (result.mode === "not_resumable") {

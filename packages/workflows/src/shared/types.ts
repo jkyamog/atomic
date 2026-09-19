@@ -416,6 +416,20 @@ export interface WorkflowRunContext<
 	/** Intentionally end this workflow run from any call depth. */
 	exit(options?: WorkflowExitOptions<TOutputs>): never;
 	/**
+	 * Register a run-level cleanup that fires when this run ends through
+	 * `ctx.exit()` or when the workflow boundary is quit. Firing happens at
+	 * most once per run no matter which terminal path wins (repeated quits,
+	 * a later ctx.exit, the process-boundary stop), so cleanups must be
+	 * safe to fire once and be skipped afterwards. A cleanup that has not
+	 * settled within the quit drain bound is reported in the quit result's
+	 * `abandonedCleanups` and is never retried.
+	 *
+	 * @param cleanup  Invoked with the exit/quit reason when one is set.
+	 * @param name     Display name reported when a drain bound abandons it.
+	 * @returns disposer that unregisters a not-yet-fired cleanup.
+	 */
+	registerExitCleanup(cleanup: (reason?: string) => void | Promise<void>, name?: string): () => void;
+	/**
 	 * Create and register a named stage synchronously. Stage work starts when
 	 * a stage method such as prompt() or complete() is awaited; the executor
 	 * infers the DAG automatically from those method calls.

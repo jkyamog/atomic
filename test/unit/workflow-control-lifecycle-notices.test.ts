@@ -352,7 +352,11 @@ describe("workflow control lifecycle notices", () => {
 				true,
 			);
 			assert.deepEqual(kinds(sent), ["resumed", "quit"], "a quit never also reports its pause");
-			assert.equal(sent[1]?.details?.resumable, true);
+			assert.equal(
+				sent[1]?.details?.resumable,
+				false,
+				"an explicit actor-bearing quit is terminal, never advertised resumable",
+			);
 		} finally {
 			unsubscribe();
 		}

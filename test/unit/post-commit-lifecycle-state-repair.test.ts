@@ -677,13 +677,27 @@ describe("post-commit quit and nested resume coherence", () => {
 		levels.length = 0;
 
 		await workflowCmd.options.handler(`resume ${runId}`, ctx);
-		const completed = await execution;
-
-		assert.equal(completed.status, "completed");
+		// The actor-bearing slash quit is terminal (012 D4; decision-draft.md:143-146):
+		// the resume command must surface the one truthful acknowledgment — the
+		// terminal refusal — and the run stays paused with exitReason "quit" and
+		// resumable false. The suspended executor never settles after a refused
+		// resume, so the execution promise is only probed with a bounded race,
+		// never awaited unconditionally.
 		assert.equal(messages.length, 1, "resume command must emit one result");
 		assert.doesNotMatch(messages[0] ?? "", /No paused stages/i);
-		assert.match(messages[0] ?? "", /resume acknowledged|resumed/i);
-		assert.equal(levels.includes("error"), false);
-		assert.equal(singletonStore.runs().find((run) => run.id === runId)?.status, "completed");
+		assert.match(messages[0] ?? "", /not resumable/i);
+		assert.equal(levels.includes("error"), true);
+		const postRefusalRun = singletonStore.runs().find((candidate) => candidate.id === runId);
+		assert.equal(postRefusalRun?.status, "paused");
+		assert.equal(postRefusalRun?.exitReason, "quit");
+		assert.equal(postRefusalRun?.resumable, false);
+		const settled = await Promise.race([
+			execution.then(
+				() => ({ settled: true as const }),
+				() => ({ settled: true as const }),
+			),
+			sleep(250).then(() => ({ settled: false as const })),
+		]);
+		assert.equal(settled.settled, false, "suspended executor must not settle after a refused resume");
 	});
 });

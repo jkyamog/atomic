@@ -707,6 +707,7 @@ export async function run<TInputs extends WorkflowInputValues, TRunInputs extend
 			}
 			return exit.exit(options);
 		},
+	registerExitCleanup: (cleanup, name) => exit.registerRunExitCleanup(cleanup, name),
 		ui,
 		stage: (name: string, options?: StageOptions) => {
 			ownController.signal.throwIfAborted();
@@ -880,6 +881,7 @@ export async function run<TInputs extends WorkflowInputValues, TRunInputs extend
 			ownController.abort(new WorkflowGracefulQuitError(runId, "workflow runtime"));
 			return runtimeSettled.promise;
 		},
+		drainExitCleanups: (timeoutMs) => exit.drainRunExitCleanups(timeoutMs),
 	});
 	terminalEvents.register();
 	let durableAdmissionFailure: { error: unknown } | undefined;

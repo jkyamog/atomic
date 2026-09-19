@@ -28,6 +28,8 @@ export interface WorkflowExitManager {
 	registerWorkflowExitCleanup(stageId: string, cleanup: WorkflowExitCleanup): () => void;
 	runWorkflowExitCleanups(reason?: string): void;
 	drainWorkflowExitCleanups(reason?: string): Promise<void>;
+	registerRunExitCleanup(cleanup: (reason?: string) => void | Promise<void>, name?: string): () => void;
+	drainRunExitCleanups(timeoutMs: number, reason?: string): Promise<readonly string[]>;
 	throwIfWorkflowExitSelected(): void;
 	exit(options?: WorkflowExitOptions): never;
 }
@@ -40,6 +42,11 @@ export function createWorkflowExitManager(input: {
 	let selectedExit: WorkflowExitSignal | undefined;
 	const exitCleanups = new Map<string, WorkflowExitCleanup>();
 	const workflowExitCleanupPromises = new Set<Promise<void>>();
+	const runExitCleanups: Array<{
+		readonly name: string;
+		readonly cleanup: (reason?: string) => void | Promise<void>;
+	}> = [];
+	const runExitCleanupPromises = new Map<Promise<void>, string>();
 
 	const workflowExitSkippedReason = (reason?: string): string =>
 		reason === undefined || reason.length === 0 ? "workflow-exit" : `workflow-exit: ${reason}`;
@@ -94,10 +101,77 @@ export function createWorkflowExitManager(input: {
 	const runWorkflowExitCleanups = (reason?: string): void => {
 		for (const cleanup of [...exitCleanups.values()]) invokeWorkflowExitCleanup(cleanup, reason);
 	};
+	const invokeRunExitCleanup = (
+		name: string,
+		cleanup: (reason?: string) => void | Promise<void>,
+		reason?: string,
+	): void => {
+		const promise = Promise.resolve()
+			.then(() => cleanup(reason))
+			.catch(() => {
+				// Run-level cleanups are best-effort and must never fail the
+				// quit or the ctx.exit finalization.
+			});
+		runExitCleanupPromises.set(promise, name);
+		void promise.finally(() => {
+			runExitCleanupPromises.delete(promise);
+		});
+	};
+	/**
+	 * Fire every registered run-level exit cleanup exactly once: the set is
+	 * spliced on fire, so later drains (a repeated quit, the ctx.exit
+	 * finalizer, a direct drain) observe nothing to fire, and unregisters
+	 * returned for already-fired entries become no-ops.
+	 */
+	const fireRunExitCleanups = (reason?: string): void => {
+		if (runExitCleanups.length === 0) return;
+		for (const entry of runExitCleanups.splice(0, runExitCleanups.length)) {
+			invokeRunExitCleanup(entry.name, entry.cleanup, reason);
+		}
+	};
+	const registerRunExitCleanup = (
+		cleanup: (reason?: string) => void | Promise<void>,
+		name?: string,
+	): (() => void) => {
+		const entry = { name: name ?? "exit-cleanup", cleanup };
+		runExitCleanups.push(entry);
+		return () => {
+			const index = runExitCleanups.indexOf(entry);
+			if (index !== -1) runExitCleanups.splice(index, 1);
+		};
+	};
+	/**
+	 * Fire the run-level set and await the fired cleanups up to `timeoutMs`,
+	 * which bounds each cleanup because they all run in parallel. Returns the
+	 * names still pending when the bound expires; a hanging cleanup must never
+	 * pin the quit.
+	 */
+	const drainRunExitCleanups = async (timeoutMs: number, reason?: string): Promise<readonly string[]> => {
+		fireRunExitCleanups(reason);
+		if (runExitCleanupPromises.size === 0) return [];
+		let expire: (() => void) | undefined;
+		const deadline = new Promise<void>((resolve) => {
+			expire = resolve;
+		});
+		const timer = setTimeout(() => expire?.(), timeoutMs);
+		// Node's timer keeps the loop alive otherwise; quit must not extend
+		// process lifetime just because a cleanup may never settle.
+		(timer as { unref?: () => void }).unref?.();
+		try {
+			await Promise.race([Promise.all([...runExitCleanupPromises.keys()]), deadline]);
+		} finally {
+			clearTimeout(timer);
+		}
+		return [...runExitCleanupPromises.values()];
+	};
 	const drainWorkflowExitCleanups = async (reason?: string): Promise<void> => {
 		runWorkflowExitCleanups(reason);
-		while (workflowExitCleanupPromises.size > 0) {
-			await Promise.all([...workflowExitCleanupPromises]);
+		// The ctx.exit finalizer path is also the drain point for the
+		// run-level set: a run's cleanups fire through exactly one of this,
+		// a quit drain, or nothing — once-only either way.
+		fireRunExitCleanups(reason);
+		while (workflowExitCleanupPromises.size > 0 || runExitCleanupPromises.size > 0) {
+			await Promise.all([...workflowExitCleanupPromises, ...runExitCleanupPromises.keys()]);
 		}
 	};
 	const throwIfWorkflowExitSelected = (): void => {
@@ -218,6 +292,8 @@ export function createWorkflowExitManager(input: {
 		registerWorkflowExitCleanup,
 		runWorkflowExitCleanups,
 		drainWorkflowExitCleanups,
+	registerRunExitCleanup,
+	drainRunExitCleanups,
 		throwIfWorkflowExitSelected,
 		exit,
 	};

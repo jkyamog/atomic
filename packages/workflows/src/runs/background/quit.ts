@@ -33,6 +33,12 @@ import {
 } from "../foreground/stage-control-registry.js";
 import { jobTracker as defaultJobTracker, type JobTracker } from "./job-tracker.js";
 import { aggregateWorkflowRootRunId, expandedControlRunIds } from "./workflow-lifecycle-aggregate.js";
+/**
+ * Bounded wait for `ctx.registerExitCleanup` cleanups to settle during a
+ * quit. A hanging cleanup must never pin the quit: it is abandoned, reported
+ * in the result's `abandonedCleanups`, and is not retried.
+ */
+export const EXIT_CLEANUP_QUIT_TIMEOUT_MS = 30_000;
 
 export type QuitRunResult =
 	| {
@@ -43,6 +49,8 @@ export type QuitRunResult =
 			readonly cancelledTools: readonly WorkflowCancelledToolNode[];
 			/** Aborted nodes whose callback ignored its signal within the bounded wait. */
 			readonly abandonedTools: readonly WorkflowToolNodeIdentity[];
+			/** Run-level exit cleanups not settled within the quit drain bound. */
+			readonly abandonedCleanups?: readonly string[];
 			/** Runtime suspension caveat when no node could acknowledge control. */
 			readonly message?: string;
 	  }
@@ -74,7 +82,10 @@ type QuitAllRunResult =
  *    shrink, so one scan is enough and no rescan loop can spin;
  * 4. abort that set, wait a bounded interval, and publish settled/abandoned
  *    nodes as cancelled;
- * 5. only then record the durable paused transition and the resumable run.
+ * 5. drain the run-level exit cleanups registered through
+ *    `ctx.registerExitCleanup`, bounded per cleanup — "interrupt" never
+ *    drains because it is a resumable pause, not a quit;
+ * 6. only then record the durable paused transition and the resumable run.
  *
  * Step 4 is the point of no return: an aborted callback cannot be un-aborted,
  * and the executor that observed the abort suspends without writing any
@@ -89,6 +100,12 @@ type QuitAllRunResult =
  * It deliberately does NOT abort through the cancellation registry or append a
  * terminal `workflow.run.end` entry. Destructive cancellation remains an
  * internal lifecycle mechanism.
+ *
+ * An explicit quit — requested by a user or an agent, i.e. with `actor` set —
+ * is terminal: the local record and the durable transition publish
+ * `resumable: false`, so no resume surface offers the run again. Stop, reap,
+ * rerun. Internal and process-boundary stops (no actor) and "interrupt"
+ * actions remain resumable pauses.
  *
  * A quit publishes its stage pauses in step 1, long before step 5 can record the
  * quit itself, so the run passes through an ordinary paused state on the way.
@@ -113,6 +130,8 @@ export async function quitRunWithAction(
 				awaitSettlement?: boolean;
 				/** Who requested this quit. Omitted for internal callers. */
 				actor?: WorkflowActor;
+				/** Per-cleanup bound for the exit-cleanup drain. Defaults to EXIT_CLEANUP_QUIT_TIMEOUT_MS. */
+				cleanupDrainTimeoutMs?: number;
 		  }
 		| undefined,
 	action: "quit" | "pause",
@@ -124,6 +143,10 @@ export async function quitRunWithAction(
 	const run = activeStore.runs().find((candidate) => candidate.id === runId);
 	if (!run) return { ok: false, runId, reason: "not_found" };
 	if (run.endedAt !== undefined) return { ok: false, runId, reason: "already_ended" };
+	// An explicit quit (user or agent requester) is terminal: the stop is
+	// published `resumable: false` so no resume surface offers the run again.
+	// Internal and process-boundary stops stay resumable pauses.
+	const terminal = action === "quit" && opts?.actor !== undefined;
 	workflowObservationRuntime(activeStore).control(runId, action, opts?.actor);
 	const aggregateRootRunId = aggregateWorkflowRootRunId(activeStore, runId);
 	if (aggregateRootRunId !== runId) {
@@ -232,15 +255,39 @@ export async function quitRunWithAction(
 		if (abandonedTools.length > 0) jobs.detach(runId, jobs.get(runId));
 	};
 	const needsProgressCheck = runtimeQuit !== undefined || (current.resumable === false && graph.nodes.length === 0);
-	const resumable = !needsProgressCheck || hasDurableQuitProgress(runId);
+	const resumable = terminal ? false : !needsProgressCheck || hasDurableQuitProgress(runId);
 	// Existing checkpoints survive an unconfirmed transition; a fresh run cannot
-	// become resumable merely because its executor stopped locally.
-	if (runtimeQuit !== undefined) publishLocalQuit(activeStore, runId, pausedRunIds, hasDurableQuitProgress(runId));
+	// become resumable merely because its executor stopped locally. An explicit
+	// (actor-bearing) quit is terminal: its publications never claim resumable.
+	if (runtimeQuit !== undefined)
+		publishLocalQuit(activeStore, runId, pausedRunIds, terminal ? false : hasDurableQuitProgress(runId));
+	// Run-level exit cleanups registered via ctx.registerExitCleanup drain on
+	// a true quit only: "pause" is a resumable stop, and cleanups that tear
+	// down run-owned resources must not fire on it. The bound applies per
+	// cleanup (they run in parallel); anything still pending at the deadline
+	// is abandoned, reported, and never retried. The drain awaits, so it must
+	// come after the early local publication above: the drain's yields are
+	// scheduling windows in which a concurrent unadmitted-run discard could
+	// otherwise remove the still-"running" record and turn the post-drain
+	// lookup below into a spurious not_found.
+	const abandonedCleanups: string[] = [];
+	if (action === "quit") {
+		const drainBound = opts?.cleanupDrainTimeoutMs ?? EXIT_CLEANUP_QUIT_TIMEOUT_MS;
+		const drained = await Promise.all(
+			expandedControlRunIds(activeStore, runId).map((controlRunId) => {
+				const control = toolControls.runControl(controlRunId);
+				return control === undefined
+					? Promise.resolve([] as readonly string[])
+					: control.drainExitCleanups(drainBound);
+			}),
+		);
+		for (const names of drained) abandonedCleanups.push(...names);
+	}
 	const settle = async (): Promise<DurableQuitOutcome> => {
 		await admissionSettlement;
 		const durableTransition = await markDurableQuit(runId, current, resumable);
 		if (durableTransition === "refused") {
-			if (suspendedByAbort) publish(hasDurableQuitProgress(runId));
+			if (suspendedByAbort) publish(terminal ? false : hasDurableQuitProgress(runId));
 			return durableTransition;
 		}
 		publish(resumable);
@@ -255,9 +302,10 @@ export async function quitRunWithAction(
 				if (outcome === "refused") throw new Error(`Workflow ${runId} refused the durable paused transition`);
 			}),
 			(error, preservedProgress) => {
-				const message = unrecordedDurableQuitMessage(error, preservedProgress);
+				const carried = terminal ? false : preservedProgress;
+				const message = unrecordedDurableQuitMessage(error, carried);
 				current.error = message;
-				publish(preservedProgress);
+				publish(carried);
 				return message;
 			},
 		);
@@ -266,16 +314,28 @@ export async function quitRunWithAction(
 			if ((await settle()) === "refused") return { ok: false, runId, reason: "already_ended" };
 		} catch (error) {
 			if (!suspendedByAbort) throw error;
-			const preservedProgress = hasDurableQuitProgress(runId);
+			const preservedProgress = terminal ? false : hasDurableQuitProgress(runId);
 			publish(preservedProgress);
 			throw new Error(unrecordedDurableQuitMessage(error, preservedProgress), { cause: error });
 		}
 	}
+	const cleanupCaveat =
+		abandonedCleanups.length === 0
+			? ""
+			: ` Abandoned ${abandonedCleanups.length} exit cleanup(s) that did not settle within the drain bound: ${abandonedCleanups.join(", ")}; their side effects may be incomplete.`;
 	const message =
-		runtimeQuit !== undefined || !resumable
-			? `Run ${runId} quit. ${runtimeQuit === undefined ? "" : "No further workflow steps will be admitted; untracked initialization or workflow code may still finish. "}${resumable ? "Resume with /workflow resume." : "No durable progress was recorded; this run cannot be resumed."}${admissionControl ? " Database pause settlement is pending; inspect workflow status for persistence errors." : ""}`
+		runtimeQuit !== undefined || !resumable || abandonedCleanups.length > 0
+			? `Run ${runId} quit. ${runtimeQuit === undefined ? "" : "No further workflow steps will be admitted; untracked initialization or workflow code may still finish. "}${terminal ? "This run is terminal and cannot be resumed; start a new run to continue." : resumable ? "Resume with /workflow resume." : "No durable progress was recorded; this run cannot be resumed."}${cleanupCaveat}${admissionControl ? " Database pause settlement is pending; inspect workflow status for persistence errors." : ""}`
 			: undefined;
-	return { ok: true, runId, paused, cancelledTools, abandonedTools, ...(message === undefined ? {} : { message }) };
+	return {
+		ok: true,
+		runId,
+		paused,
+		cancelledTools,
+		abandonedTools,
+		...(abandonedCleanups.length > 0 ? { abandonedCleanups } : {}),
+		...(message === undefined ? {} : { message }),
+	};
 }
 
 /**
@@ -283,7 +343,10 @@ export async function quitRunWithAction(
  *
  * An unconfirmed transition does not create durable progress, but must not
  * discard existing checkpoints either. Recording the local stop keeps the run
- * controllable so a later quit can retry the durable transition.
+ * controllable so a later actor-less quit can re-attempt the durable
+ * transition and upgrade the record. An explicit (actor-bearing) quit is
+ * terminal: its retries keep the record `resumable: false`, so no resume
+ * surface reopens it.
  *
  * The boundary run is deliberately excluded from the descendant loop: a bare
  * `recordRunPaused(runId)` first would publish a plain paused state, and a
